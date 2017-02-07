@@ -64,7 +64,13 @@ public class PiledSSLServer extends PiledAbstractServer {
 			int count = workers.length;
 			for (int i = 0; i < count; i++) {
 				SimpleThreadPoolExecutor executor = new SimpleThreadPoolExecutor(wc,
-		                new SimpleNamedThreadFactory("HTTPS Service Worker" + (count == 1 ? "" : "-" + (i + 1))));
+		                new SimpleNamedThreadFactory("HTTPS Service Worker" + (count == 1 ? "" : "-" + (i + 1))) {
+							@Override
+							public void updatePrefix(String prefix) {
+								if (namePrefix != null) return;
+								super.updatePrefix(prefix);
+							}
+						});
 				executor.allowCoreThreadTimeOut(wc.threadTimeout);
 				this.workers[i].bindingServer(this, executor);
 			}
@@ -77,8 +83,9 @@ public class PiledSSLServer extends PiledAbstractServer {
 		ThreadPoolExecutorConfig ec = PiledSSLConfig.sslEnginePool;
 		if (ec == null) {
 			ec = new ThreadPoolExecutorConfig();
+			ec.workerName = "HTTPS Engine";
 		}
-		enginePool = new ChainedThreadPoolExecutor(ec, new SimpleNamedThreadFactory("HTTPS Engine"));
+		enginePool = new ChainedThreadPoolExecutor(ec);
 		enginePool.allowCoreThreadTimeOut(ec.threadTimeout);
 	}
 
