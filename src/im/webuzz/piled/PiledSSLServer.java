@@ -7,7 +7,7 @@
 
 package im.webuzz.piled;
 
-import im.webuzz.config.Config;
+//import im.webuzz.config.Config;
 import im.webuzz.pilet.HttpConfig;
 import im.webuzz.pilet.HttpLoggingConfig;
 import im.webuzz.pilet.MIMEConfig;
@@ -738,6 +738,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 	}
 
 	public static void main(String[] args) {
+		/*
 		if (args != null && args.length > 0) {
 			if (args.length > 1 && "--ssl-details".equals(args[0])) {
 				Config.initialize(args[1]);
@@ -754,7 +755,42 @@ public class PiledSSLServer extends PiledAbstractServer {
 		Config.registerUpdatingListener(MIMEConfig.class);
 		Config.registerUpdatingListener(PiledConfig.class);
 		Config.registerUpdatingListener(PiledSSLConfig.class);
-		
+		// */
+		try {
+			Class<?> clazz = Class.forName(PiledConfig.configClassName);
+			if (clazz != null) {
+				Method initMethod = clazz.getMethod("initialize", args != null && args.length > 0 ? String.class : Void.class);
+				if (initMethod != null && (initMethod.getModifiers() & Modifier.STATIC) != 0) {
+					if (args != null && args.length > 0) {
+						if (args.length > 1 && "--ssl-details".equals(args[0])) {
+							initMethod.invoke(clazz, args[1]);
+						} else {
+							initMethod.invoke(clazz, args[0]);
+						}
+					} else {
+						initMethod.invoke(clazz);
+					}
+				}
+				Method registerMethod = clazz.getMethod("registerUpdatingListener", Class.class);
+				if (registerMethod != null && (registerMethod.getModifiers() & Modifier.STATIC) != 0) {
+					registerMethod.invoke(clazz, HttpConfig.class);
+					registerMethod.invoke(clazz, HttpLoggingConfig.class);
+					registerMethod.invoke(clazz, MIMEConfig.class);
+					registerMethod.invoke(clazz, PiledConfig.class);
+					registerMethod.invoke(clazz, PiledSSLConfig.class);
+				}
+			}
+		} catch (ClassNotFoundException e) {
+			System.out.println("[WARN]: Class " + PiledConfig.configClassName + " is not found. Server may not be configurable.");
+		} catch (Throwable e) {
+			e.printStackTrace();
+			System.out.println("[WARN]: There are errors. Server may not be configurable.");
+		}
+		if (args != null && args.length > 1 && "--ssl-details".equals(args[0])) {
+			new PiledSSLConnector().startSSL(true);
+			return;
+		}
+	
 		int workerCount = PiledSSLConfig.sslWorkers;
 		if (workerCount <= -2) {
 			workerCount = PiledConfig.httpWorkers;
@@ -770,7 +806,22 @@ public class PiledSSLServer extends PiledAbstractServer {
 	}
 
 	public static void extraRun(final int workerCount) {
-		Config.registerUpdatingListener(PiledSSLConfig.class);
+		//Config.registerUpdatingListener(PiledSSLConfig.class);
+		try {
+			Class<?> clazz = Class.forName(PiledConfig.configClassName);
+			if (clazz != null) {
+				Method registerMethod = clazz.getMethod("registerUpdatingListener", Class.class);
+				if (registerMethod != null && (registerMethod.getModifiers() & Modifier.STATIC) != 0) {
+					registerMethod.invoke(clazz, PiledSSLConfig.class);
+				}
+			}
+		} catch (ClassNotFoundException e) {
+			System.out.println("[WARN]: Class " + PiledConfig.configClassName + " is not found. PiledSSLConfig may not be configurable.");
+		} catch (Throwable e) {
+			//e.printStackTrace();
+			System.out.println("[WARN]: There are errors. PiledSSLConfig may not be configurable.");
+		}
+		
 		if (PiledSSLConfig.sslPort > 0) {
 			Thread sslServerThread = new Thread(new Runnable() {
 				@Override

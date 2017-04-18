@@ -23,8 +23,6 @@ import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.TrustManagerFactory;
 
-import im.webuzz.config.Config;
-
 public class PiledSSLConnector {
 	public SSLEngine engine;
 	public ByteBuffer outNetBuffer;
@@ -173,7 +171,7 @@ public class PiledSSLConnector {
 		
 		try {
 			String keyStore = PiledSSLConfig.sslKeyStore;
-			SSLContext context = createSSLContext(false, keyStore, Config.parseSecret(PiledSSLConfig.sslPassword));
+			SSLContext context = createSSLContext(false, keyStore, PiledSSLConfig.sslPassword);
 			activeSSLKeyStore = keyStore;
 			sslContext = context;
 			return context;
