@@ -88,6 +88,7 @@ public class ByteBufferPool {
 	}
 	
 	public static boolean putByteBufferToPool(ByteBuffer buf) {
+		if (buf == null) return false;
 		buf.clear();
 		int size = buf.capacity();
 		synchronized (lock) {

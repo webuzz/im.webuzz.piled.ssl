@@ -7,6 +7,7 @@
 
 package im.webuzz.piled;
 
+import im.webuzz.threadpool.ChainedThreadPoolExecutor;
 import im.webuzz.threadpool.ThreadPoolExecutorConfig;
 
 /**
@@ -75,7 +76,14 @@ class SSLServerMonitor implements Runnable {
 			ThreadPoolExecutorConfig ec = PiledSSLConfig.sslEnginePool;
 			if (ec != null && server instanceof PiledSSLServer) {
 				PiledSSLServer sslServer = (PiledSSLServer) server;
-				ec.updatePoolWithComparison(sslServer.enginePool, lastEngineConfig);
+				ChainedThreadPoolExecutor[] enginePools = sslServer.enginePools;
+				if (enginePools != null) {
+					for (ChainedThreadPoolExecutor pool : enginePools) {
+						if (pool != null) {
+							ec.updatePoolWithComparison(pool, lastEngineConfig);
+						}
+					}
+				}
 				lastEngineConfig = ec;
 			}
 

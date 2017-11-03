@@ -45,7 +45,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 
 	Map<SocketChannel, PiledSSLConnector> sessionMap = new ConcurrentHashMap<SocketChannel, PiledSSLConnector>();
 	
-	ChainedThreadPoolExecutor enginePool;
+	ChainedThreadPoolExecutor[] enginePools;
 
 	static PiledSSLServer singleton;
 	
@@ -61,10 +61,25 @@ public class PiledSSLServer extends PiledAbstractServer {
 			if (wc == null) {
 				wc = new ThreadPoolExecutorConfig();
 			}
+			ThreadPoolExecutorConfig ec = PiledSSLConfig.sslEnginePool;
+			if (ec == null) {
+				ec = new ThreadPoolExecutorConfig();
+				ec.workerName = "HTTPS Engine";
+			}
 			int count = workers.length;
+			enginePools = new ChainedThreadPoolExecutor[count];
 			for (int i = 0; i < count; i++) {
+				enginePools[i] = new ChainedThreadPoolExecutor(ec,
+						new SimpleNamedThreadFactory("HTTPS Engine Worker" + (count == 1 ? "" : "-" + (i + 1))) {
+							@Override
+							public void updatePrefix(String prefix) {
+								if (namePrefix != null) return;
+								super.updatePrefix(prefix);
+							}
+						});
+				enginePools[i].allowCoreThreadTimeOut(ec.threadTimeout);
 				SimpleThreadPoolExecutor executor = new SimpleThreadPoolExecutor(wc,
-		                new SimpleNamedThreadFactory("HTTPS Service Worker" + (count == 1 ? "" : "-" + (i + 1))) {
+						new SimpleNamedThreadFactory("HTTPS Service Worker" + (count == 1 ? "" : "-" + (i + 1))) {
 							@Override
 							public void updatePrefix(String prefix) {
 								if (namePrefix != null) return;
@@ -80,19 +95,19 @@ public class PiledSSLServer extends PiledAbstractServer {
 	public void init() throws IOException {
 		super.init();
 		this.pendingData = new ConcurrentHashMap<SocketChannel, List<ByteBuffer>>(); // supports multiple threads
-		ThreadPoolExecutorConfig ec = PiledSSLConfig.sslEnginePool;
-		if (ec == null) {
-			ec = new ThreadPoolExecutorConfig();
-			ec.workerName = "HTTPS Engine";
-		}
-		enginePool = new ChainedThreadPoolExecutor(ec);
-		enginePool.allowCoreThreadTimeOut(ec.threadTimeout);
 	}
 
 	@Override
 	public void runLoop() throws IOException {
 		super.runLoop();
-		enginePool.shutdown();
+		if (enginePools != null) {
+			for (int i = 0; i < enginePools.length; i++) {
+				ChainedThreadPoolExecutor pool = enginePools[i];
+				if (pool != null) {
+					pool.shutdown();
+				}
+			}
+		}
 	}
 	
 	protected void accept(SelectionKey key) throws IOException {
@@ -126,10 +141,22 @@ public class PiledSSLServer extends PiledAbstractServer {
 	protected void read(final SelectionKey key) throws IOException {
 		final SocketChannel socketChannel = (SocketChannel) key.channel();
 		key.interestOps(0); // Do not call until following task is run, in which will invoke key#interestOps
-		enginePool.execute(socketChannel, new Runnable() {
+		int index = 0;
+		if (socketChannel != null) {
+			index = socketChannel.hashCode() % enginePools.length;
+		}
+		enginePools[index].execute(socketChannel, new Runnable() {
 			
 			@Override
 			public void run() {
+				try {
+					safeRun();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+			
+			public void safeRun() {
 				if (!socketChannel.isOpen()) {
 					return;
 				}
@@ -326,10 +353,22 @@ public class PiledSSLServer extends PiledAbstractServer {
 	protected void write(final SelectionKey key) throws IOException {
 		final SocketChannel socketChannel = (SocketChannel) key.channel();
 		key.interestOps(0); // Do not call until following task is run, in which will invoke key#interestOps
-		enginePool.execute(socketChannel, new Runnable() {
+		int index = 0;
+		if (socketChannel != null) {
+			index = socketChannel.hashCode() % enginePools.length;
+		}
+		enginePools[index].execute(socketChannel, new Runnable() {
 			
 			@Override
 			public void run() {
+				try {
+					safeRun();
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+			
+			public void safeRun() {
 				if (!socketChannel.isOpen()) {
 					return;
 				}
@@ -805,7 +844,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 		runServer(workerCount);
 	}
 
-	public static void extraRun(final int workerCount) {
+	public static void extraRun(int httpWorkerCount) {
 		//Config.registerUpdatingListener(PiledSSLConfig.class);
 		try {
 			Class<?> clazz = Class.forName(PiledConfig.configClassName);
@@ -823,6 +862,17 @@ public class PiledSSLServer extends PiledAbstractServer {
 		}
 		
 		if (PiledSSLConfig.sslPort > 0) {
+			int sslWorkerCount = PiledSSLConfig.sslWorkers;
+			if (sslWorkerCount <= -2) {
+				sslWorkerCount = httpWorkerCount;
+			}
+			if (sslWorkerCount <= 0) {
+				sslWorkerCount = Runtime.getRuntime().availableProcessors() + sslWorkerCount;
+				if (sslWorkerCount <= 0) {
+					sslWorkerCount = 1;
+				}
+			}
+			final int workerCount = sslWorkerCount;
 			Thread sslServerThread = new Thread(new Runnable() {
 				@Override
 				public void run() {
