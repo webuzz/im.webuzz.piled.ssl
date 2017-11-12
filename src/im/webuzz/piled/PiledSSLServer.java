@@ -145,6 +145,9 @@ public class PiledSSLServer extends PiledAbstractServer {
 		if (socketChannel != null) {
 			index = socketChannel.hashCode() % enginePools.length;
 		}
+		// Even though key.interestOps(0) is invoked, other threads (e.g. application write)
+		// may push change request to invoke key#interestOps to change ops.
+		// Chained thread pool must be used.
 		enginePools[index].execute(socketChannel, new Runnable() {
 			
 			@Override
@@ -357,6 +360,9 @@ public class PiledSSLServer extends PiledAbstractServer {
 		if (socketChannel != null) {
 			index = socketChannel.hashCode() % enginePools.length;
 		}
+		// Even though key.interestOps(0) is invoked, other threads (e.g. application write)
+		// may push change request to invoke key#interestOps to change ops.
+		// Chained thread pool must be used.
 		enginePools[index].execute(socketChannel, new Runnable() {
 			
 			@Override
@@ -415,15 +421,33 @@ public class PiledSSLServer extends PiledAbstractServer {
 							}
 							outNetBuffer = sessionMetadata.outNetBuffer;
 							try {
-								sessionMetadata.engine.wrap(buf, outNetBuffer);
-								/*
+								//sessionMetadata.engine.wrap(buf, outNetBuffer);
 								SSLEngineResult result = sessionMetadata.engine.wrap(buf, outNetBuffer);
-								if (result != null && result.getStatus() == Status.BUFFER_OVERFLOW) {
-									System.out.println("Overflow " + buf.remaining());
-								} else if (result != null && result.getStatus() == Status.BUFFER_UNDERFLOW) {
-									System.out.println("Underflow " + buf.remaining());
+								outNetBuffer.flip();
+								if (!outNetBuffer.hasRemaining()) { // outNetBuffer contains no bytes
+									System.out.println("SSL Error: Empty outNetBuffer " + buf.remaining() + " ? " + buf.hasRemaining());
+									if (result != null) {
+										Status status = result.getStatus();
+										if (status == Status.BUFFER_OVERFLOW) {
+											System.out.println("SSL Error: Overflow " + buf.remaining());
+										} else if (status == Status.BUFFER_UNDERFLOW) {
+											System.out.println("SSL Error: Underflow " + buf.remaining());
+										} else if (status == Status.CLOSED) {
+											System.out.println("SSL Error: Close Status = " + status.ordinal());
+										} else {
+											System.out.println("SSL Error: Status = " + status.ordinal());
+										}
+									}
+									if (!buf.hasRemaining()) {
+										break;
+									}
+									if (sessionMetadata.outNetBuffer == outNetBuffer) {
+										sessionMetadata.outNetBuffer = null;
+									}
+									ByteBufferPool.putByteBufferToPool(outNetBuffer);
+									closeChannel(key, socketChannel, true, true);
+									return;
 								}
-								// */
 							} catch (SSLException e) {
 								// Internal server error!
 								e.printStackTrace();
@@ -435,7 +459,6 @@ public class PiledSSLServer extends PiledAbstractServer {
 								closeChannel(key, socketChannel, true, true);
 								return;
 							}
-							outNetBuffer.flip();
 						} else {
 							outNetBuffer = sessionMetadata.outNetBuffer; // should always be not null!
 						}
