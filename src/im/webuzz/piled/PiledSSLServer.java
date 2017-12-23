@@ -64,13 +64,12 @@ public class PiledSSLServer extends PiledAbstractServer {
 			ThreadPoolExecutorConfig ec = PiledSSLConfig.sslEnginePool;
 			if (ec == null) {
 				ec = new ThreadPoolExecutorConfig();
-				ec.workerName = "HTTPS Engine";
 			}
 			int count = workers.length;
 			enginePools = new ChainedThreadPoolExecutor[count];
 			for (int i = 0; i < count; i++) {
 				enginePools[i] = new ChainedThreadPoolExecutor(ec,
-						new SimpleNamedThreadFactory("HTTPS Engine Worker" + (count == 1 ? "" : "-" + (i + 1))) {
+						new SimpleNamedThreadFactory((ec.workerName == null ? "HTTPS Engine Worker" : ec.workerName) + (count == 1 ? "" : "-" + (i + 1))) {
 							@Override
 							public void updatePrefix(String prefix) {
 								if (namePrefix != null) return;
@@ -79,7 +78,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 						});
 				enginePools[i].allowCoreThreadTimeOut(ec.threadTimeout);
 				SimpleThreadPoolExecutor executor = new SimpleThreadPoolExecutor(wc,
-						new SimpleNamedThreadFactory("HTTPS Service Worker" + (count == 1 ? "" : "-" + (i + 1))) {
+						new SimpleNamedThreadFactory((ec.workerName == null ? "HTTPS Service Worker" : ec.workerName) + (count == 1 ? "" : "-" + (i + 1))) {
 							@Override
 							public void updatePrefix(String prefix) {
 								if (namePrefix != null) return;
@@ -266,6 +265,10 @@ public class PiledSSLServer extends PiledAbstractServer {
 				if (inNetBuffer.hasRemaining()) {
 					inNetBuffer.compact();
 				} else {
+					if (sessionMetadata.inAppBuffer == inAppBuffer) {
+						sessionMetadata.inAppBuffer = null;
+					}
+					ByteBufferPool.putByteBufferToPool(inAppBuffer);
 					//inNetBuffer.clear();
 					if (sessionMetadata.inNetBuffer == inNetBuffer) {
 						sessionMetadata.inNetBuffer = null;
