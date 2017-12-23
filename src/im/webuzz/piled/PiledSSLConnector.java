@@ -16,12 +16,14 @@ import java.security.KeyStore;
 import java.util.ArrayList;
 import java.util.List;
 
+import javax.net.ssl.KeyManager;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLException;
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509ExtendedKeyManager;
 
 public class PiledSSLConnector {
 	public SSLEngine engine;
@@ -203,7 +205,19 @@ public class PiledSSLConnector {
 			// KeyManager's decide which key material to use.
 			KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
 			kmf.init(ks, passphrase);
-			sslContext.init(kmf.getKeyManagers(), null, null);
+			X509ExtendedKeyManager x509KeyManager = null;
+			if (PiledSSLConfig.sslSupportSNI) {
+				for (KeyManager keyManager : kmf.getKeyManagers()) {
+					if (keyManager instanceof X509ExtendedKeyManager) {
+						x509KeyManager = (X509ExtendedKeyManager) keyManager;
+					}
+				}
+			}
+			if (x509KeyManager == null) {
+				sslContext.init(kmf.getKeyManagers(), null, null);
+			} else {
+				sslContext.init(new KeyManager[] { new SNIKeyManager(x509KeyManager) }, null, null);
+			}
 		}
 		fis.close();
 		return sslContext;

@@ -25,6 +25,8 @@ public class PiledSSLConfig {
 	 */
 	public static String sslPassword;
 	
+	public static boolean sslSupportSNI = false; // Not tested yet.
+	
 	public static String[] sslProtocols = new String[] {
 		"TLSv1.2",
 		"TLSv1.1",
