@@ -53,6 +53,12 @@ public class SNIKeyManager extends X509ExtendedKeyManager {
 				break;
 			}
 		}
+		String defaultHost = PiledSSLConfig.sslDefaultHost;
+		if (defaultHost != null && defaultHost.length() > 0
+				&& keyManager.getCertificateChain(defaultHost) != null
+				&& keyManager.getPrivateKey(defaultHost) != null) {
+			return defaultHost;
+		}
 		return keyManager.chooseEngineServerAlias(keyType, issuers, engine);
 	}
 
