@@ -4,6 +4,7 @@
 	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
 	<classpathentry combineaccessrules="false" kind="src" path="/im.webuzz.piled"/>
 	<classpathentry combineaccessrules="false" kind="src" path="/im.webuzz.pilet"/>
-	<classpathentry combineaccessrules="false" kind="src" path="/im.webuzz.threadpool"/>
+	<classpathentry kind="var" path="M2_REPO/im/webuzz/webuzz-threadpool/2.1.4/webuzz-threadpool-2.1.4.jar" sourcepath="M2_REPO/im/webuzz/webuzz-threadpool/2.1.4/webuzz-threadpool-2.1.4-sources.jar"/>
+	<!--classpathentry kind="src" path="/im.webuzz.threadpool"/-->
 	<classpathentry kind="output" path="bin"/>
 </classpath>

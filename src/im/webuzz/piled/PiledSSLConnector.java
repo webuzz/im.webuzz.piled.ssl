@@ -21,8 +21,9 @@ import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
 import javax.net.ssl.SSLException;
-import javax.net.ssl.SSLSession;
-import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.SSLParameters;
+//import javax.net.ssl.SSLSession;
+import javax.net.ssl.SSLSessionContext;
 import javax.net.ssl.X509ExtendedKeyManager;
 
 public class PiledSSLConnector {
@@ -103,10 +104,15 @@ public class PiledSSLConnector {
 						for (String protocol : protocols) {
 							if (matchedProtocols.contains(protocol)) continue;
 							System.out.println(protocol + " [Skipped]");
-						}						
+						}
 					}
 				}
 			}
+		}
+		if (PiledSSLConfig.sslPreferServerCiphersOrder) {
+			SSLParameters p = new SSLParameters();
+			p.setUseCipherSuitesOrder(true);
+			engine.setSSLParameters(p);
 		}
 		if (enabledCiphers != null) {
 			engine.setEnabledCipherSuites(enabledCiphers);
@@ -136,7 +142,7 @@ public class PiledSSLConnector {
 						for (String cipher : ciphers) {
 							if (matchedCiphers.contains(cipher)) continue;
 							System.out.println(cipher + " [Skipped]");
-						}						
+						}
 					}
 				}
 			}
@@ -173,7 +179,7 @@ public class PiledSSLConnector {
 		
 		try {
 			String keyStore = PiledSSLConfig.sslKeyStore;
-			SSLContext context = createSSLContext(false, keyStore, PiledSSLConfig.sslPassword);
+			SSLContext context = createSSLContext(keyStore, PiledSSLConfig.sslPassword);
 			activeSSLKeyStore = keyStore;
 			sslContext = context;
 			return context;
@@ -183,10 +189,7 @@ public class PiledSSLConnector {
 		}
 	}
 	
-	public static SSLContext createSSLContext(
-			boolean clientMode, 
-			String keystore, 
-			String password) throws Exception {
+	public static SSLContext createSSLContext(String keystore, String password) throws Exception {
 		if (keystore == null) return null;
 		// Create/initialize the SSLContext with key material
 		char[] passphrase = password != null ? password.toCharArray() : null;
@@ -194,32 +197,32 @@ public class PiledSSLConnector {
 		KeyStore ks = KeyStore.getInstance("JKS");
 		FileInputStream fis = new FileInputStream(keystore);
 		ks.load(fis, passphrase);
+		fis.close();
 		SSLContext sslContext = SSLContext.getInstance("TLS");
-		
-		if (clientMode) {
-			// TrustManager's decide whether to allow connections.
-			TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
-			tmf.init(ks);
-			sslContext.init(null, tmf.getTrustManagers(), null);
-		} else {
-			// KeyManager's decide which key material to use.
-			KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
-			kmf.init(ks, passphrase);
-			X509ExtendedKeyManager x509KeyManager = null;
-			if (PiledSSLConfig.sslSupportSNI) {
-				for (KeyManager keyManager : kmf.getKeyManagers()) {
-					if (keyManager instanceof X509ExtendedKeyManager) {
-						x509KeyManager = (X509ExtendedKeyManager) keyManager;
-					}
+		// KeyManager's decide which key material to use.
+		KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
+		kmf.init(ks, passphrase);
+		X509ExtendedKeyManager x509KeyManager = null;
+		if (PiledSSLConfig.sslSupportSNI) {
+			for (KeyManager keyManager : kmf.getKeyManagers()) {
+				if (keyManager instanceof X509ExtendedKeyManager) {
+					x509KeyManager = (X509ExtendedKeyManager) keyManager;
 				}
 			}
-			if (x509KeyManager == null) {
-				sslContext.init(kmf.getKeyManagers(), null, null);
-			} else {
-				sslContext.init(new KeyManager[] { new SNIKeyManager(x509KeyManager) }, null, null);
+		}
+		if (x509KeyManager == null) {
+			sslContext.init(kmf.getKeyManagers(), null, null);
+		} else {
+			sslContext.init(new KeyManager[] { new SNIKeyManager(x509KeyManager) }, null, null);
+		}
+		int sslSessionCacheSize = PiledSSLConfig.sslSessionCacheSize;
+		if (sslSessionCacheSize > 0) {
+			SSLSessionContext sessionContext = sslContext.getServerSessionContext();
+			if (sessionContext != null) {
+				sessionContext.setSessionCacheSize(sslSessionCacheSize);
+				sessionContext.setSessionTimeout(Math.max(120, PiledSSLConfig.sslSessionTimeout));
 			}
 		}
-		fis.close();
 		return sslContext;
 	}
 
@@ -243,6 +246,7 @@ public class PiledSSLConnector {
 			if (!remoteClosing && !engine.isOutboundDone()) {
 				server.writeSSLDummyPacket(this, socket);
 			}
+			/*
 			// JDK 1.6 SSLSession memory leak. https://bugs.openjdk.java.net/browse/JDK-6386530
 			// In JDK 1.6.0_u45, it is not fixed.
 			// Fixing tips: https://projects.tigase.org/issues/1395
@@ -250,6 +254,8 @@ public class PiledSSLConnector {
 			if (session != null) {
 				session.invalidate();
 			}
+			// */
+			engine = null;
 		}
 		if (socket != null) {
 			SelectionKey key = socket.keyFor(server.selector);
@@ -261,7 +267,9 @@ public class PiledSSLConnector {
 			} catch (IOException e) {
 				e.printStackTrace();
 			}
+			socket = null;
 		}
+		server = null;
 	}
 	
 }

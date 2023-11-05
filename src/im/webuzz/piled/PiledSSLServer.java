@@ -30,6 +30,7 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
 
 import javax.net.ssl.SSLEngine;
@@ -93,7 +94,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 	
 	public void init() throws IOException {
 		super.init();
-		this.pendingData = new ConcurrentHashMap<SocketChannel, List<ByteBuffer>>(); // supports multiple threads
+		this.pendingData = new ConcurrentHashMap<SocketChannel, Queue<ByteBuffer>>(); // supports multiple threads
 	}
 
 	@Override
@@ -189,7 +190,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 							e.printStackTrace();
 						} else {
 							String message = e.getMessage();
-							if (message.indexOf("Connection reset by peer") == -1
+							if (message.indexOf("Connection reset") == -1
 									&& message.indexOf("Connection timed out") == -1
 									&& message.indexOf("Broken pipe") == -1
 									&& message.indexOf("closed by the remote host") == -1
@@ -226,10 +227,18 @@ public class PiledSSLServer extends PiledAbstractServer {
 						return;
 					}
 					SSLEngineResult result = null;
+					HandshakeStatus handshakeStatus = null;
 					try {
+						handshakeStatus = sessionMetadata.engine.getHandshakeStatus();
 						result = sessionMetadata.engine.unwrap(inNetBuffer, inAppBuffer);
 					} catch (SSLException e) {
 						e.printStackTrace();
+						System.out.println(handshakeStatus);
+						if (handshakeStatus != null) {
+							System.out.println("HS status: " + handshakeStatus.name() + " : " + handshakeStatus.ordinal());
+						}
+						System.out.println("In app buffer: " + inAppBuffer.remaining() + " ? " + inAppBuffer.hasRemaining());
+						System.out.println("In net buffer: " + inNetBuffer.remaining() + " ? " + inNetBuffer.hasRemaining());
 						closeChannel(key, socketChannel, true, true);
 						return;
 					}
@@ -282,7 +291,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 	}
 
 	private void interestNext(SelectionKey key, SocketChannel socketChannel) {
-		List<ByteBuffer> queue = (List<ByteBuffer>) this.pendingData.get(socketChannel);
+		Queue<ByteBuffer> queue = (Queue<ByteBuffer>) this.pendingData.get(socketChannel);
 		boolean interestedInWriting = queue != null && !queue.isEmpty();
 		/*
 		if (interestedInWriting) {
@@ -391,17 +400,35 @@ public class PiledSSLServer extends PiledAbstractServer {
 					key.selector().wakeup();
 					return;
 				}
-				List<ByteBuffer> queue = (List<ByteBuffer>) pendingData.get(socketChannel);
+				Queue<?> queue = (Queue<?>) pendingData.get(socketChannel);
 				if (queue == null) {
 					closeChannel(key, socketChannel, false, true);
 					return;
 				}
 				int totalSent = 0;
 				while (!queue.isEmpty()) {
-					ByteBuffer buf = (ByteBuffer) queue.get(0);
+					ByteBuffer buf = null;
+					try {
+						Object listItem = queue.peek();
+						if (listItem == null) {
+							System.out.println("**************************");
+							System.out.println(queue.isEmpty());
+							System.out.println("**************************");
+							break;
+						}
+						buf = (ByteBuffer) listItem;
+					} catch (Exception e1) {
+						e1.printStackTrace();
+						System.out.println("**************************");
+						System.out.println(queue.isEmpty());
+						System.out.println("**************************");
+						Object listItem = queue.peek();
+						System.out.println(listItem);
+						buf = (ByteBuffer) listItem;
+					}
 					if (buf.capacity() == 0) {
 						pendingData.remove(socketChannel);
-						queue.remove(0);
+						queue.poll();
 						//if (sessionMetadata.outNetBuffer != null) {
 						//	ByteBufferPool.putByteBufferToPool(sessionMetadata.outNetBuffer);
 						//	sessionMetadata.outNetBuffer = null;
@@ -471,7 +498,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 							numWritten = socketChannel.write(outNetBuffer);
 						} catch (Throwable e) {
 							String message = e.getMessage();
-							if (message != null && message.indexOf("Connection reset by peer") == -1
+							if (message != null && message.indexOf("Connection reset") == -1
 									&& message.indexOf("Broken pipe") == -1
 									&& message.indexOf("connection was forcibly closed") == -1) {
 								e.printStackTrace();
@@ -525,7 +552,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 					
 					int sent = buf.limit();
 					if (!queue.isEmpty()) {
-						queue.remove(0); // always removing from head, thread safe
+						queue.poll(); // always removing from head, thread safe
 					}
 					totalSent += sent;
 				} // end of while queue
