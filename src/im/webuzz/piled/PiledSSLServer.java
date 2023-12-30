@@ -28,7 +28,7 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
-import java.util.List;
+//import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -179,8 +179,17 @@ public class PiledSSLServer extends PiledAbstractServer {
 				
 				if (sessionMetadata.inNetBuffer == null) {
 					sessionMetadata.inNetBuffer = ByteBufferPool.getByteBufferFromPool(sessionMetadata.bufferSize);
+					sessionMetadata.inNetBuffer.flip();
 				}
 				ByteBuffer inNetBuffer = sessionMetadata.inNetBuffer;
+				if (!inNetBuffer.hasRemaining()) {
+					inNetBuffer.clear();
+					//System.out.println("Read network data to new buffer.");
+				} else {
+					inNetBuffer.position(inNetBuffer.position() + inNetBuffer.remaining());
+					inNetBuffer.limit(inNetBuffer.capacity());
+					//System.out.println("Read network data to existing: " + inNetBuffer.remaining() + " / " + inNetBuffer.position());
+				}
 				if (!gotData/* && !inNetBuffer.hasRemaining()*/) {
 					int numRead = -1;
 					try {
@@ -190,7 +199,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 							e.printStackTrace();
 						} else {
 							String message = e.getMessage();
-							if (message.indexOf("Connection reset") == -1
+							if (message != null && message.indexOf("Connection reset") == -1
 									&& message.indexOf("Connection timed out") == -1
 									&& message.indexOf("Broken pipe") == -1
 									&& message.indexOf("closed by the remote host") == -1
@@ -228,6 +237,12 @@ public class PiledSSLServer extends PiledAbstractServer {
 					}
 					SSLEngineResult result = null;
 					HandshakeStatus handshakeStatus = null;
+					boolean beforeNetHasRemainng = inNetBuffer.hasRemaining();
+					int beforeNetRemainings = inNetBuffer.remaining();
+					int beforeNetOffset = inNetBuffer.arrayOffset();
+					boolean beforeAppHasRemainng = inAppBuffer.hasRemaining();
+					int beforeAppRemainings = inAppBuffer.remaining();
+					int beforeAppOffset = inAppBuffer.arrayOffset();
 					try {
 						handshakeStatus = sessionMetadata.engine.getHandshakeStatus();
 						result = sessionMetadata.engine.unwrap(inNetBuffer, inAppBuffer);
@@ -237,9 +252,30 @@ public class PiledSSLServer extends PiledAbstractServer {
 						if (handshakeStatus != null) {
 							System.out.println("HS status: " + handshakeStatus.name() + " : " + handshakeStatus.ordinal());
 						}
-						System.out.println("In app buffer: " + inAppBuffer.remaining() + " ? " + inAppBuffer.hasRemaining());
-						System.out.println("In net buffer: " + inNetBuffer.remaining() + " ? " + inNetBuffer.hasRemaining());
+						System.out.println("In app buffer: " + inAppBuffer.remaining() + "/" + inAppBuffer.capacity() + " ? " + inAppBuffer.hasRemaining());
+						System.out.println("Before app buffer: " + beforeAppRemainings + "/" + inAppBuffer.capacity() + " ? " + beforeAppHasRemainng);
+						System.out.println("Before app buffer more : " + beforeAppOffset + " vs " + inAppBuffer.arrayOffset());
+						System.out.println("In net buffer: " + inNetBuffer.remaining() + "/" + inNetBuffer.capacity() + " ? " + inNetBuffer.hasRemaining());
+						System.out.println("Before net buffer: " + beforeNetRemainings + "/" + inNetBuffer.capacity() + " ? " + beforeNetHasRemainng);
+						System.out.println("Before net buffer more : " + beforeNetOffset + " vs " + inNetBuffer.arrayOffset());
 						closeChannel(key, socketChannel, true, true);
+						/*
+						byte[] netArr = inNetBuffer.array();
+						char[] hexChars = "0123456789abcdef".toCharArray();
+						for (int i = 0; i < beforeNetRemainings; i++) {
+							byte b = netArr[(beforeNetOffset + i) % inNetBuffer.capacity()];
+							int b0 = (b & 0xf0) >> 4;
+							int b1 = (b & 0x0f);
+							System.out.print(hexChars[b0]);
+							System.out.print(hexChars[b1]);
+							if (i % 16 == 15) {
+								System.out.println();
+							} else {
+								System.out.print(" ");
+							}
+						}
+						System.out.println("Done");
+						//*/
 						return;
 					}
 					inAppBuffer.flip();
@@ -271,18 +307,11 @@ public class PiledSSLServer extends PiledAbstractServer {
 				// Compact our read buffer after we've handled the data instead of before
 				// we read so that during the SSL handshake we can deal with the BUFFER_UNDERFLOW
 				// case by simple waiting for more data (which will be appended into this buffer).
-				if (inNetBuffer.hasRemaining()) {
-					inNetBuffer.compact();
-				} else {
+				if (!adjustInNetBuffer(inNetBuffer, sessionMetadata)) {
 					if (sessionMetadata.inAppBuffer == inAppBuffer) {
 						sessionMetadata.inAppBuffer = null;
 					}
 					ByteBufferPool.putByteBufferToPool(inAppBuffer);
-					//inNetBuffer.clear();
-					if (sessionMetadata.inNetBuffer == inNetBuffer) {
-						sessionMetadata.inNetBuffer = null;
-					}
-					ByteBufferPool.putByteBufferToPool(inNetBuffer);
 				}
 				interestNext(key, socketChannel);
 			}
@@ -569,14 +598,41 @@ public class PiledSSLServer extends PiledAbstractServer {
 		});
 	}	
 
+	private boolean adjustInNetBuffer(ByteBuffer inNetBuffer, PiledSSLConnector sessionMetadata) {
+		if (inNetBuffer.hasRemaining()) {
+			//System.out.println("inNetBuffer 0 remaining: " + inNetBuffer.remaining() + " / " + inNetBuffer.position());
+			inNetBuffer.compact();
+			//System.out.println("inNetBuffer#compact 0 remaining: " + inNetBuffer.remaining() + " / " + inNetBuffer.position());
+			inNetBuffer.flip();
+			//System.out.println("inNetBuffer#flip 0 remaining: " + inNetBuffer.remaining() + " / " + inNetBuffer.position());
+			return true;
+		} else {
+			//inNetBuffer.clear();
+			if (sessionMetadata.inNetBuffer == inNetBuffer) {
+				sessionMetadata.inNetBuffer = null;
+			}
+			ByteBufferPool.putByteBufferToPool(inNetBuffer);
+			//putPoolCount++;
+			return false;
+		}
+	}
+	
+	private void delegateSSLEngineTasks(SSLEngine engine) {
+		Runnable task;
+		while ((task = engine.getDelegatedTask()) != null) {
+			//exec.execute(task);
+			task.run(); // Other NIO library run these tasks synchronously
+		}
+	}
+
 	/*
 	 * Return whether SSL handshake is finished and next operation should be performed.
 	 */
 	private boolean progressSSLHandshake(PiledSSLConnector sessionMetadata, SelectionKey key, SocketChannel socketChannel,
 			int inOperation) throws IOException {
 		SSLEngine engine = sessionMetadata.engine;
-		Runnable task;
 		//SSLEngineResult result;
+		boolean alreadyRead = false;
 		while (true) {
 			switch (engine.getHandshakeStatus()) {
 			case FINISHED:
@@ -589,9 +645,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 					return false;
 				}
 			case NEED_TASK:
-				while ((task = engine.getDelegatedTask()) != null) {
-					task.run();
-				}
+				delegateSSLEngineTasks(engine);
 				break;
 			case NEED_UNWRAP: {
 				// Since the handshake needs an unwrap() and we're only in here because of either
@@ -599,16 +653,32 @@ public class PiledSSLServer extends PiledAbstractServer {
 				// data is available.
 				if (sessionMetadata.inNetBuffer == null) {
 					sessionMetadata.inNetBuffer = ByteBufferPool.getByteBufferFromPool(sessionMetadata.bufferSize);
+					sessionMetadata.inNetBuffer.flip();
 				}
+				int numRead = -1;
 				ByteBuffer inNetBuffer = sessionMetadata.inNetBuffer;
-				//if (!inNetBuffer.hasRemaining()) {
-					int numRead = socketChannel.read(inNetBuffer);
+				boolean existing = false;
+				if (!inNetBuffer.hasRemaining() || !alreadyRead) {
+					if (!inNetBuffer.hasRemaining()) {
+						inNetBuffer.clear();
+						//System.out.println("Read network data to new buffer.");
+					} else {
+						inNetBuffer.position(inNetBuffer.position() + inNetBuffer.remaining());
+						inNetBuffer.limit(inNetBuffer.capacity());
+						//System.out.println("Read network data to existing: " + inNetBuffer.remaining() + " / " + inNetBuffer.position());
+						existing = true;
+					}
+					numRead = socketChannel.read(inNetBuffer);
+					alreadyRead = true;
 					if (numRead < 0) {
 						throw new SSLException("Handshake aborted by remote entity (socket closed)");
 					}
-				//}
+				}
 				//int numRead = inNetBuffer.remaining();
 				if (numRead == 0 && engine.getHandshakeStatus() == HandshakeStatus.NEED_UNWRAP) {
+					if (existing) {
+						inNetBuffer.flip();
+					}
 					// Bail so we go back to blocking the selector
 					
 					// Since we're in here the channel is already registered for OP_READ.
@@ -629,9 +699,12 @@ public class PiledSSLServer extends PiledAbstractServer {
 					inAppBuffer = sessionMetadata.inAppBuffer;
 				}
 				
-				int unwrapCount = 0;
+				boolean needWrapping = false;
+				boolean needUnwrapping = false;
+				//int unwrapCount = 0;
 				while (inNetBuffer.hasRemaining()) {
 					SSLEngineResult result = engine.unwrap(inNetBuffer, inAppBuffer);
+					/*
 					unwrapCount++;
 					if (unwrapCount > 1000000) {
 						Status rsStatus = result.getStatus();
@@ -641,29 +714,37 @@ public class PiledSSLServer extends PiledAbstractServer {
 						System.out.println("Engine status: " + hsStatus.ordinal() + "/" + hsStatus.name() + " " + hsStatus);
 						throw new SSLException("Handshake unwrap too many times!");
 					}
+					//*/
 
 					HandshakeStatus hsStatus = engine.getHandshakeStatus();
 					if (hsStatus == HandshakeStatus.NEED_TASK) {
-						while ((task = engine.getDelegatedTask()) != null) {
-							task.run();
-						}
+						delegateSSLEngineTasks(engine);
+					} else if (hsStatus == HandshakeStatus.NEED_WRAP) {
+						needWrapping = true;
+						Status rsStatus = result.getStatus();
+						System.out.println("unwrap status: " + rsStatus.ordinal() + "/" + rsStatus.name() + " " + rsStatus);
+//						System.out.println("Handshake inNetBuffer: " + inNetBuffer.remaining() + " " + inNetBuffer.position());
+//						System.out.println("Handshake inAppBuffer: " + inAppBuffer.remaining() + " " + inAppBuffer.position());
+//						System.out.println("Engine status: " + hsStatus.ordinal() + "/" + hsStatus.name() + " " + hsStatus);
+//						System.out.println("Before inNetBuffer: " + inNetBeforeRemaining + " / " + inNetBeforePosition);
+//						System.out.println("Before inAppBuffer: " + inAppBeforeRemaining + " / " + inAppBeforePosition);
+						adjustInNetBuffer(inNetBuffer, sessionMetadata);
+						break;
 					}
 					
 					Status rsStatus = result.getStatus();
 					if (rsStatus == Status.BUFFER_UNDERFLOW) {
-						if (inNetBuffer.hasRemaining()) {
-							inNetBuffer.compact();
-						} else {
-							//inNetBuffer.clear();
-							if (sessionMetadata.inNetBuffer == inNetBuffer) {
-								sessionMetadata.inNetBuffer = null;
-							}
-							ByteBufferPool.putByteBufferToPool(inNetBuffer);
+						adjustInNetBuffer(inNetBuffer, sessionMetadata);
+						System.out.println("To read new data from network");
+						if (alreadyRead) {
+							//key.interestOps(SelectionKey.OP_READ);
+							pendingChanges.offer(new ChangeRequest(socketChannel, ChangeRequest.CHANGEOPS, SelectionKey.OP_READ));
+							key.selector().wakeup();
+							return false;
 						}
-						//key.interestOps(SelectionKey.OP_READ);
-						pendingChanges.offer(new ChangeRequest(socketChannel, ChangeRequest.CHANGEOPS, SelectionKey.OP_READ));
-						key.selector().wakeup();
-						return false;
+						System.out.println("Call case NEED_UNWRAP again");
+						needUnwrapping = true;
+						break;
 					} else if (rsStatus != Status.OK) {
 						if (rsStatus == Status.CLOSED) {
 							throw new SSLException("Handshake closed by remote entity");
@@ -676,32 +757,19 @@ public class PiledSSLServer extends PiledAbstractServer {
 
 					// Status OK
 					if (inAppBuffer.position() > 0) { // A handshake already produces data for us to consume.
-						if (inNetBuffer.hasRemaining()) {
-							inNetBuffer.compact();
-						} else {
-							//inNetBuffer.clear();
-							if (sessionMetadata.inNetBuffer == inNetBuffer) {
-								sessionMetadata.inNetBuffer = null;
-							}
-							ByteBufferPool.putByteBufferToPool(inNetBuffer);
-						}
+						adjustInNetBuffer(inNetBuffer, sessionMetadata);
 						sessionMetadata.handshook = true;
 						return true; // continue to read or write data
 					}
 
 					if (hsStatus == HandshakeStatus.FINISHED || hsStatus == HandshakeStatus.NOT_HANDSHAKING) {
-						if (unwrapCount > 100000) {
-							System.out.println("Handshake unwrap takes " + unwrapCount + " to finish");
-						}
-						if (inNetBuffer.hasRemaining()) {
-							inNetBuffer.compact();
+						//if (unwrapCount > 100000) {
+						//	System.out.println("Handshake unwrap takes " + unwrapCount + " to finish");
+						//}
+						if (adjustInNetBuffer(inNetBuffer, sessionMetadata)) {
 							sessionMetadata.handshook = true;
 							return true; // continue to read or write data
 						} else {
-							//inNetBuffer.clear();
-							if (sessionMetadata.inNetBuffer == inNetBuffer) {
-								sessionMetadata.inNetBuffer = null;
-							}
 							ByteBufferPool.putByteBufferToPool(inNetBuffer);
 							if (sessionMetadata.inAppBuffer == inAppBuffer) {
 								sessionMetadata.inAppBuffer = null;
@@ -717,6 +785,14 @@ public class PiledSSLServer extends PiledAbstractServer {
 					}
 
 				} // end of while
+				if (needWrapping) {
+					System.out.println("Switch from NEED_UNWRAP to NEED_WRAP with remainings " + inNetBuffer.remaining() + " / " + inNetBuffer.position());
+					break; // break switch and continue with case NEED_WRAP
+				}
+				if (needUnwrapping) {
+					System.out.println("Run case NEED_UNWRAP remainings " + inNetBuffer.remaining() + " / " + inNetBuffer.position());
+					break; // break switch and continue with case NEED_WRAP
+				}
 				//inNetBuffer.clear();
 				if (sessionMetadata.inNetBuffer == inNetBuffer) {
 					sessionMetadata.inNetBuffer = null;
@@ -747,12 +823,14 @@ public class PiledSSLServer extends PiledAbstractServer {
 
 				// Write the data away
 				int numWritten = socketChannel.write(outNetBuffer);
+				alreadyRead = true; // once write, considered as already read
 				if (numWritten < 0) {
 					throw new SSLException("Handshake aborted by remote entity (socket closed)");
 				}
 
 				if (outNetBuffer.hasRemaining()) {
 					outNetBuffer.compact();
+					outNetBuffer.flip();
 					//key.interestOps(SelectionKey.OP_WRITE);
 					pendingChanges.offer(new ChangeRequest(socketChannel, ChangeRequest.CHANGEOPS, SelectionKey.OP_WRITE));
 					key.selector().wakeup();
@@ -767,6 +845,11 @@ public class PiledSSLServer extends PiledAbstractServer {
 				ByteBufferPool.putByteBufferToPool(outNetBuffer);
 				
 				if (engine.getHandshakeStatus() == HandshakeStatus.NEED_UNWRAP) {
+					ByteBuffer inNetBuffer = sessionMetadata.inNetBuffer;
+					if (inNetBuffer != null && inNetBuffer.hasRemaining()) {
+						System.out.println("Switching back from NEED_WRAP to NEED_UNWRAP");
+						break; // break and continue to case NEED_UNWRAP
+					}
 					// We need more data (to pass to unwrap(), signal we're interested
 					// in reading on the socket
 					//key.interestOps(SelectionKey.OP_READ);
