@@ -721,8 +721,8 @@ public class PiledSSLServer extends PiledAbstractServer {
 						delegateSSLEngineTasks(engine);
 					} else if (hsStatus == HandshakeStatus.NEED_WRAP) {
 						needWrapping = true;
-						Status rsStatus = result.getStatus();
-						System.out.println("unwrap status: " + rsStatus.ordinal() + "/" + rsStatus.name() + " " + rsStatus);
+						//Status rsStatus = result.getStatus();
+						//System.out.println("unwrap status: " + rsStatus.ordinal() + "/" + rsStatus.name() + " " + rsStatus);
 //						System.out.println("Handshake inNetBuffer: " + inNetBuffer.remaining() + " " + inNetBuffer.position());
 //						System.out.println("Handshake inAppBuffer: " + inAppBuffer.remaining() + " " + inAppBuffer.position());
 //						System.out.println("Engine status: " + hsStatus.ordinal() + "/" + hsStatus.name() + " " + hsStatus);
@@ -735,14 +735,14 @@ public class PiledSSLServer extends PiledAbstractServer {
 					Status rsStatus = result.getStatus();
 					if (rsStatus == Status.BUFFER_UNDERFLOW) {
 						adjustInNetBuffer(inNetBuffer, sessionMetadata);
-						System.out.println("To read new data from network");
+						//System.out.println("To read new data from network");
 						if (alreadyRead) {
 							//key.interestOps(SelectionKey.OP_READ);
 							pendingChanges.offer(new ChangeRequest(socketChannel, ChangeRequest.CHANGEOPS, SelectionKey.OP_READ));
 							key.selector().wakeup();
 							return false;
 						}
-						System.out.println("Call case NEED_UNWRAP again");
+						//System.out.println("Call case NEED_UNWRAP again");
 						needUnwrapping = true;
 						break;
 					} else if (rsStatus != Status.OK) {
@@ -786,11 +786,11 @@ public class PiledSSLServer extends PiledAbstractServer {
 
 				} // end of while
 				if (needWrapping) {
-					System.out.println("Switch from NEED_UNWRAP to NEED_WRAP with remainings " + inNetBuffer.remaining() + " / " + inNetBuffer.position());
+					//System.out.println("Switch from NEED_UNWRAP to NEED_WRAP with remainings " + inNetBuffer.remaining() + " / " + inNetBuffer.position());
 					break; // break switch and continue with case NEED_WRAP
 				}
 				if (needUnwrapping) {
-					System.out.println("Run case NEED_UNWRAP remainings " + inNetBuffer.remaining() + " / " + inNetBuffer.position());
+					//System.out.println("Run case NEED_UNWRAP remainings " + inNetBuffer.remaining() + " / " + inNetBuffer.position());
 					break; // break switch and continue with case NEED_WRAP
 				}
 				//inNetBuffer.clear();
@@ -847,7 +847,7 @@ public class PiledSSLServer extends PiledAbstractServer {
 				if (engine.getHandshakeStatus() == HandshakeStatus.NEED_UNWRAP) {
 					ByteBuffer inNetBuffer = sessionMetadata.inNetBuffer;
 					if (inNetBuffer != null && inNetBuffer.hasRemaining()) {
-						System.out.println("Switching back from NEED_WRAP to NEED_UNWRAP");
+						//System.out.println("Switching back from NEED_WRAP to NEED_UNWRAP");
 						break; // break and continue to case NEED_UNWRAP
 					}
 					// We need more data (to pass to unwrap(), signal we're interested
